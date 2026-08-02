@@ -1,0 +1,36 @@
+SCRoot Mixed-License Notice
+
+Copyright 2026 hackintoanetwork
+
+Required Notice: Copyright 2026 hackintoanetwork (https://github.com/hackintoanetwork)
+
+1. Original SCRoot Materials
+
+Except for the exclusions below, original SCRoot application code, resources,
+tests, project-specific build configuration, documentation, and project tools
+authored by hackintoanetwork are licensed under the PolyForm Noncommercial
+License 1.0.0. A copy of those terms is available at:
+
+    LICENSES/PolyForm-Noncommercial-1.0.0.txt
+    https://polyformproject.org/licenses/noncommercial/1.0.0
+
+This permits personal use and noncommercial research, educational, and
+nonprofit use under the terms of that license. Commercial use is not granted.
+
+2. Excluded and Third-Party Materials
+
+The PolyForm license above does not relicense third-party code, derived code,
+binaries, build tooling, trademarks, firmware material, or other components
+identified in THIRD_PARTY_NOTICES.md. Those materials remain subject to their
+respective copyright notices and license terms.
+
+In particular, KernelSU-Next components, the KernelSU kernel port,
+meta-overlayfs, the GitHub Security Lab CVE-2022-38181 exploit base, and the
+Gradle wrapper are not licensed under PolyForm by this notice.
+
+3. No Implied Rights
+
+No rights are granted to Samsung, Android, KernelSU, or other third-party names,
+logos, trademarks, firmware, or software except under the applicable
+third-party terms. If a file contains its own license or copyright notice, that
+notice controls for that file.
