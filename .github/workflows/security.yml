@@ -40,5 +40,5 @@ jobs:
       - run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools -p 'test_*.py'
       - run: python3 tools/verify_release_assets.py
       - run: python3 tools/verify_corresponding_source.py
-      - run: ./gradlew --no-daemon clean testDebugUnitTest testReleaseUnitTest lintRelease assembleRelease
+      - run: ./gradlew --no-daemon --no-build-cache --rerun-tasks clean testDebugUnitTest testReleaseUnitTest lintRelease assembleRelease
       - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38

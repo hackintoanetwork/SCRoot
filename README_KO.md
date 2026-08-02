@@ -13,8 +13,8 @@
 <p align="center">
   <img src="docs/images/scroot-not-installed.png" alt="SCRoot 설치 전 화면" width="24%">
   <img src="docs/images/scroot-rooted.png" alt="SCRoot 루팅 완료 화면" width="24%">
-  <img src="docs/images/scroot-automatic-setup.png" alt="SCRoot 자동 설정 화면" width="24%">
   <img src="docs/images/scroot-exploit-trace.png" alt="SCRoot 익스플로잇 트레이스" width="24%">
+  <img src="docs/images/scroot-automatic-setup.png" alt="SCRoot 자동 설정 화면" width="24%">
 </p>
 
 SCRoot는 정확히 삼성 SCR-01 모바일 5G 라우터의 `SCR01KDU1AVK2` 펌웨어를 대상으로 하는 원클릭 루팅 앱 입니다. 기기를 검증하고, 내장된 CVE-2022-38181 Mali 익스플로잇을 실행한 다음, `SCR-01`용 KernelSU-Next 포트를 적재하고 매니저와 시스템 UI 통합을 설정합니다.

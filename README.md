@@ -13,8 +13,8 @@
 <p align="center">
   <img src="docs/images/scroot-not-installed.png" alt="SCRoot before setup" width="24%">
   <img src="docs/images/scroot-rooted.png" alt="SCRoot rooted status" width="24%">
-  <img src="docs/images/scroot-automatic-setup.png" alt="SCRoot automatic setup trace" width="24%">
   <img src="docs/images/scroot-exploit-trace.png" alt="SCRoot exploit trace" width="24%">
+  <img src="docs/images/scroot-automatic-setup.png" alt="SCRoot automatic setup trace" width="24%">
 </p>
 
 SCRoot is a one-click rooting app built specifically for the `SCR01KDU1AVK2` firmware on the Samsung SCR-01 mobile 5G router. It validates the device, runs the bundled CVE-2022-38181 Mali exploit, loads the KernelSU-Next port for the `SCR-01`, and configures the manager and system UI integration.
