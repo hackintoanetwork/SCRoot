@@ -1586,17 +1586,24 @@ object RootFlow {
         val bootId = AutoRootPreferences.currentBootId() ?: return false
         val expected = expectedSystemUiReceipt(bootId)
         val receiptFile = File(appContext.filesDir, UI_RECEIPT_FILE)
-        if (!isRegularFileNoFollow(receiptFile) || receiptFile.length() !in 1L..512L) {
-            return false
-        }
-        val receipt = try {
-            receiptFile.readLines()
-        } catch (_: Exception) {
-            return false
-        }
-        if (receipt != expected) return false
-        return probeSystemUiLiveHealth(appContext).ready
+        val receiptMatches =
+            isRegularFileNoFollow(receiptFile) &&
+                receiptFile.length() in 1L..512L &&
+                try {
+                    receiptFile.readLines() == expected
+                } catch (_: Exception) {
+                    false
+                }
+        val healthReady = probeSystemUiLiveHealth(appContext).ready
+        if (receiptMatches) return healthReady
+        if (!systemUiReceiptCanRecover(receiptMatches, healthReady)) return false
+        return writeSystemUiReceipt(appContext)
     }
+
+    internal fun systemUiReceiptCanRecover(
+        receiptMatches: Boolean,
+        liveHealthReady: Boolean
+    ): Boolean = !receiptMatches && liveHealthReady
 
     private fun probeSystemUiLiveHealth(ctx: Context): SystemUiLiveHealth {
         val appContext = ctx.applicationContext

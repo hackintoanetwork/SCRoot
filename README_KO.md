@@ -55,10 +55,10 @@ APK를 한 번 사이드로드한 이후에는 컴퓨터 없이 사용할 수 �
 
 ## 설치
 
-저장소의 [Releases](../../releases/latest)에서 `SCRoot-SCR01-1.1.0.apk`를 내려받고, USB 디버깅이 활성화된 라우터를 연결한 다음 실행하세요.
+저장소의 [Releases](../../releases/latest)에서 `SCRoot-SCR01-1.1.1.apk`를 내려받고, USB 디버깅이 활성화된 라우터를 연결한 다음 실행하세요.
 
 ```bash
-adb install "SCRoot-SCR01-1.1.0.apk"
+adb install "SCRoot-SCR01-1.1.1.apk"
 adb shell am start -n com.scr01.scroot/.MainActivity
 ```
 

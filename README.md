@@ -55,10 +55,10 @@ The bundled Home and SystemUI integration modules do not contain Samsung's `MHSH
 
 ## Installation
 
-Download `SCRoot-SCR01-1.1.0.apk` from the repository's [Releases](../../releases/latest), connect the router with USB debugging enabled, and run:
+Download `SCRoot-SCR01-1.1.1.apk` from the repository's [Releases](../../releases/latest), connect the router with USB debugging enabled, and run:
 
 ```bash
-adb install "SCRoot-SCR01-1.1.0.apk"
+adb install "SCRoot-SCR01-1.1.1.apk"
 adb shell am start -n com.scr01.scroot/.MainActivity
 ```
 

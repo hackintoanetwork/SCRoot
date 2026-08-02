@@ -1,6 +1,6 @@
 # Corresponding source
 
-This directory accompanies the GPL-covered binaries distributed in SCRoot 1.1.0. The files map the released binaries to exact upstream source snapshots, local SCR-01 changes, and the build or post-link steps used for those changes.
+This directory accompanies the GPL-covered binaries distributed in SCRoot 1.1.1. The files map the released binaries to exact upstream source snapshots, local SCR-01 changes, and the build or post-link steps used for those changes.
 
 ## Upstream snapshots
 

@@ -742,6 +742,14 @@ class RootSafetyPolicyTest {
     }
 
     @Test
+    fun missingSystemUiReceiptRecoversOnlyFromCompleteLiveHealth() {
+        assertTrue(RootFlow.systemUiReceiptCanRecover(false, true))
+        assertFalse(RootFlow.systemUiReceiptCanRecover(false, false))
+        assertFalse(RootFlow.systemUiReceiptCanRecover(true, true))
+        assertFalse(RootFlow.systemUiReceiptCanRecover(true, false))
+    }
+
+    @Test
     fun uiRecoveryIsLimitedToComponentActivationFailures() {
         assertTrue(RootFlow.provisionFailureMayUseLiveRecovery(57, false))
         assertTrue(RootFlow.provisionFailureMayUseLiveRecovery(58, false))

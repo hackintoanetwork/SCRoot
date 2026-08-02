@@ -141,8 +141,8 @@ EXPECTED_GRADLE_VALUES = {
     "compileSdk": "34",
     "minSdk": "30",
     "targetSdk": "30",
-    "versionCode": "2",
-    "versionName": "1.1.0",
+    "versionCode": "3",
+    "versionName": "1.1.1",
 }
 
 def sha256_bytes(data: bytes) -> str:
