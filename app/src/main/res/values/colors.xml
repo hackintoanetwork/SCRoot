@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="scroot_background">#F6F6F6</color>
+    <color name="scroot_surface">#FCFCFC</color>
+    <color name="scroot_primary">#0072DE</color>
+</resources>

@@ -1,0 +1,7 @@
+id=meta-overlayfs
+metamodule=1
+name=OverlayFS MetaModule (SCR-01 direct)
+version=1.3.1-scr01.3
+versionCode=13103
+author=KernelSU Developers / SCR-01 port
+description=OverlayFS metamodule with automatic per-app kernel umount registration for SCR-01 direct /data mode
