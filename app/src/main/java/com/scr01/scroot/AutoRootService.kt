@@ -23,6 +23,7 @@ class AutoRootService : Service() {
 
     companion object {
         const val ACTION_BOOT_ROOT = "com.scr01.scroot.action.BOOT_ROOT"
+        const val ACTION_BOOT_UI = "com.scr01.scroot.action.BOOT_UI"
 
         private const val CHANNEL_ID = "auto_root_trace_v2"
         private const val NOTIFICATION_ID = 4101
@@ -54,6 +55,11 @@ class AutoRootService : Service() {
         internal fun shouldStopAfterRejectedStart(currentlyRunning: Boolean): Boolean =
             !currentlyRunning
 
+        internal fun shouldFinalizeAutomaticAttempt(
+            wasRunning: Boolean,
+            action: String?
+        ): Boolean = wasRunning && action == ACTION_BOOT_ROOT
+
         internal fun boundedAutoLogMessage(value: String): String {
             val truncated = value.length > 4_096
             val sanitized = buildString(minOf(value.length, 4_096)) {
@@ -82,6 +88,8 @@ class AutoRootService : Service() {
     }
     @Volatile
     private var workerFuture: Future<*>? = null
+    @Volatile
+    private var activeAction: String? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastNotificationAt = 0L
     private var foregroundReady = false
@@ -114,7 +122,10 @@ class AutoRootService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (intent?.action != ACTION_BOOT_ROOT || !AutoRootPreferences.isEnabled(this)) {
+        val action = intent?.action
+        if ((action != ACTION_BOOT_ROOT && action != ACTION_BOOT_UI) ||
+            !AutoRootPreferences.isEnabled(this)
+        ) {
             if (shouldStopAfterRejectedStart(running.get())) {
                 try {
                     stopForeground(STOP_FOREGROUND_REMOVE)
@@ -126,6 +137,7 @@ class AutoRootService : Service() {
         }
         if (!running.compareAndSet(false, true)) return START_NOT_STICKY
         activeInProcess = true
+        activeAction = action
 
         if (AutoRootPreferences.currentBootId() == null) {
             appendAutoLog("[ERROR] boot_id unavailable")
@@ -135,6 +147,10 @@ class AutoRootService : Service() {
                 false
             )
             return START_NOT_STICKY
+        }
+
+        if (action == ACTION_BOOT_UI) {
+            return startDeferredUiRepair()
         }
 
         if (!AutoRootPreferences.claimCurrentBoot(this)) {
@@ -236,11 +252,52 @@ class AutoRootService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun startDeferredUiRepair(): Int {
+        if (!AutoRootPreferences.isUiDeferredForCurrentBoot(this) ||
+            !RootFlow.isUserUnlockedForSystemUi(this)
+        ) {
+            finishService(
+                "Launcher setup deferred",
+                "Launcher setup will resume after user unlock.",
+                false,
+                retainNotification = false
+            )
+            return START_NOT_STICKY
+        }
+        appendAutoLog("[RESUME] User unlocked; completing launcher integration")
+        updateNotification(
+            "Finishing launcher setup",
+            "Verifying the Apps screen and Root menu.",
+            true
+        )
+        if (!acquireWakeLock()) {
+            appendAutoLog("[ERROR] Launcher repair wake lock is unavailable.")
+            finishService(
+                "Launcher setup needs attention",
+                "Open SCRoot to finish launcher setup.",
+                false
+            )
+            return START_NOT_STICKY
+        }
+        try {
+            workerFuture = workerExecutor.submit { runDeferredUiRepair() }
+        } catch (_: RuntimeException) {
+            appendAutoLog("[ERROR] Launcher repair worker could not start.")
+            finishService(
+                "Launcher setup needs attention",
+                "Open SCRoot to finish launcher setup.",
+                false
+            )
+        }
+        return START_NOT_STICKY
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         destroying.set(true)
         val wasRunning = running.getAndSet(false)
+        val actionAtStop = activeAction
         try {
             if (wasRunning) {
                 workerFuture?.cancel(true)
@@ -253,7 +310,7 @@ class AutoRootService : Service() {
                     .cancel(TRACE_LAUNCH_NOTIFICATION_ID)
             } catch (_: RuntimeException) {
             }
-            if (wasRunning) {
+            if (shouldFinalizeAutomaticAttempt(wasRunning, actionAtStop)) {
                 val interruptionStatus = AutoRootPreferences.interruptionStatus(
                     exploitRecorded = AutoRootPreferences.currentExploitAttempt(this) != null,
                     moduleLoaded = RootFlow.isModuleLoaded()
@@ -279,6 +336,7 @@ class AutoRootService : Service() {
                 )
             }
         } finally {
+            activeAction = null
             foregroundReady = false
             activeInProcess = false
             releaseLaunchReservation()
@@ -321,8 +379,13 @@ class AutoRootService : Service() {
                 result.managerCrowned &&
                 result.userspaceReady &&
                 result.systemUiIntegrated
+            val coreComplete = result.rooted &&
+                result.moduleLoaded &&
+                result.managerCrowned &&
+                result.userspaceReady
             when {
                 complete -> {
+                    AutoRootPreferences.clearUiDeferredForCurrentBoot(this)
                     if (!persistAutomaticOutcome(
                             AutoRootPreferences.STATUS_SUCCESS,
                             "KernelSU and SCR-01 system UI setup complete"
@@ -336,6 +399,42 @@ class AutoRootService : Service() {
                     finishService(
                         "Automatic root complete",
                         "Root, KernelSU and the SCR-01 system UI are ready.",
+                        false
+                    )
+                }
+                coreComplete && result.systemUiDeferred -> {
+                    if (!AutoRootPreferences.markUiDeferredForCurrentBoot(this)) {
+                        if (!persistAutomaticOutcome(
+                                AutoRootPreferences.STATUS_SAFE_FAILURE,
+                                "Launcher deferral state could not be saved"
+                            )
+                        ) return
+                        appendAutoLog("[ERROR] Launcher deferral state could not be saved")
+                        BootTraceBus.complete(
+                            success = false,
+                            completionDetail = "Launcher deferral state unavailable"
+                        )
+                        finishService(
+                            "Automatic setup needs attention",
+                            "Open SCRoot after unlocking the device.",
+                            false
+                        )
+                        return
+                    }
+                    if (!persistAutomaticOutcome(
+                            AutoRootPreferences.STATUS_SUCCESS,
+                            "KernelSU ready; launcher setup deferred until user unlock"
+                        )
+                    ) return
+                    appendAutoLog("[OK] Root and KernelSU are ready")
+                    appendAutoLog("[WAIT] Launcher setup will finish after user unlock")
+                    BootTraceBus.complete(
+                        success = true,
+                        completionDetail = "Root and KernelSU are ready; unlock to finish launcher setup"
+                    )
+                    finishService(
+                        "Automatic root complete",
+                        "Unlock once to finish the SCR-01 launcher setup.",
                         false
                     )
                 }
@@ -466,6 +565,67 @@ class AutoRootService : Service() {
         }
     }
 
+    private fun runDeferredUiRepair() {
+        try {
+            val result = RootFlow.run(
+                applicationContext,
+                maxExploitTries = 0,
+                ui = { line ->
+                    appendAutoLog(line)
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastNotificationAt >= 1_500L) {
+                        lastNotificationAt = now
+                        updateNotification(
+                            "Finishing launcher setup",
+                            notificationDetail(line),
+                            true
+                        )
+                    }
+                },
+                launchManager = false,
+                executionMode = RootFlow.ExecutionMode.AUTO
+            )
+            if (destroying.get()) return
+            val complete = result.rooted && result.moduleLoaded &&
+                result.managerCrowned && result.userspaceReady &&
+                result.systemUiIntegrated
+            if (complete && AutoRootPreferences.clearUiDeferredForCurrentBoot(this)) {
+                appendAutoLog("[OK] Deferred launcher integration complete")
+                finishService(
+                    "Launcher setup complete",
+                    "The Apps screen and Root menu are ready.",
+                    false
+                )
+            } else {
+                appendAutoLog("[WARNING] Deferred launcher integration needs attention")
+                finishService(
+                    "Launcher setup needs attention",
+                    "Open SCRoot to repair the Apps screen and Root menu.",
+                    false
+                )
+            }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            if (!destroying.get()) {
+                appendAutoLog("[ERROR] Deferred launcher integration interrupted")
+                finishService(
+                    "Launcher setup interrupted",
+                    "Open SCRoot to finish launcher setup.",
+                    false
+                )
+            }
+        } catch (error: Exception) {
+            if (!destroying.get()) {
+                appendAutoLog("[ERROR] ${error.message ?: error.javaClass.simpleName}")
+                finishService(
+                    "Launcher setup needs attention",
+                    "Open SCRoot to finish launcher setup.",
+                    false
+                )
+            }
+        }
+    }
+
     private fun persistAutomaticOutcome(status: String, detail: String): Boolean {
         if (destroying.get()) return false
         if (AutoRootPreferences.finishCurrentBoot(this, status, detail)) return true
@@ -486,8 +646,9 @@ class AutoRootService : Service() {
     @Synchronized
     private fun beginAutoLog() {
         try {
-            val log = File(filesDir, "auto-root.log")
-            val previous = File(filesDir, "auto-root.log.1")
+            val storage = AutoRootPreferences.deviceProtectedContext(this).filesDir
+            val log = File(storage, "auto-root.log")
+            val previous = File(storage, "auto-root.log.1")
             if (previous.exists()) previous.delete()
             if (log.exists() && !log.renameTo(previous)) {
                 log.writeText("")
@@ -506,14 +667,15 @@ class AutoRootService : Service() {
         } catch (_: RuntimeException) {
         }
         try {
-            val log = File(filesDir, "auto-root.log")
+            val storage = AutoRootPreferences.deviceProtectedContext(this).filesDir
+            val log = File(storage, "auto-root.log")
             val timestamp = SimpleDateFormat(
                 "yyyy-MM-dd HH:mm:ss.SSS",
                 Locale.US
             ).format(Date())
             val encoded = "$timestamp $boundedMessage\n".toByteArray(Charsets.UTF_8)
             if (autoLogNeedsRotation(log.length(), encoded.size)) {
-                val previous = File(filesDir, "auto-root.log.1")
+                val previous = File(storage, "auto-root.log.1")
                 if (previous.exists()) previous.delete()
                 if (!log.renameTo(previous)) FileOutputStream(log, false).use { }
             }
@@ -649,6 +811,7 @@ class AutoRootService : Service() {
         }
         releaseWakeLock()
         running.set(false)
+        activeAction = null
         activeInProcess = false
         try {
             stopForeground(

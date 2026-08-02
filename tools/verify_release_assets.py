@@ -54,14 +54,14 @@ EXPECTED_HOME_PREDECESSORS = {
 TOP_LEVEL = {
     ASSETS / "manager.apk": "80a9e4b1ba9644f361add3e003e1075bd4f9cb374bbde465c2b57522b5288ba9",
     ASSETS / "meta-overlayfs-scr01.zip": "df4b4a33c9974eb873e62ad01fa7229e9648cc848d032f6192a89b055cb9528c",
-    ASSETS / "scr01-home-ui-1.7.27.zip": "c75717aa479708fd496b3204bad6290f481e61109771cde3ac557f95a0befc23",
+    ASSETS / "scr01-home-ui-1.7.28.zip": "0f2e8d8ec02b8ab78fc41f3a32df126d282a2f78242d1dd4f9bf85b33d06cc05",
     ASSETS / "scr01-overview-bridge-0.4.36.zip": "a3bcae90900fd02436108b8644fb5aa9e247816b98fb8fbe4f0c9ee81ce45981",
     NATIVE / "libadbroot.so": "5562adc1e5c6f52fb91f469a1a7d3480050d8697fb5dedbd7fb386d282cd88b8",
     NATIVE / "libbootstrap.so": "e81028efeaf44aba81607aa6116cc1273ad8f4d4eee4ec58ff5e14be061fca90",
-    NATIVE / "libexploit.so": "ea4cd0b16bc8c08885b2ab27a92700a0519e619c97026d627b3f74d5dec80a54",
+    NATIVE / "libexploit.so": "86a8a98029e913b16abf5480bcecf8fe036cb0339de9c7b91dc5c0749898dece",
     NATIVE / "libksucheck.so": "0abb36169ff0864ee659e5b40f7666b01cf36d765e3216d9a4d14695f92817d6",
     NATIVE / "libksud.so": "637676421190aeec504093707ad675a45faaf11bd4b53129d52e150490902cca",
-    NATIVE / "libksuglue.so": "1cec66df04a0578e315565658198cf1af26f976cdac11ab3755bb5190d7138da",
+    NATIVE / "libksuglue.so": "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9",
     NATIVE / "libmemprep.so": "a743f6c5432ec8072faa1bc47e07d8811135905eb3e458e8f4d892b192cadcee",
     NATIVE / "librootsh.so": "77cfc2e1e8fd710cb18b442f950a76b63e0e0f30214c1131aed49d8ff85edc04",
 }
@@ -77,11 +77,11 @@ ZIP_CONTENTS = {
         "post-mount.sh": "cc9e198f97fa4505d5cfc5e04265a8bae9644206576ef73917de95d22d55fce3",
         "uninstall.sh": "cc0e4342a39f8da1dadf5e96f6b0da1884e7bb10de670cbcb74d4bd4ed3e7e49",
     },
-    ASSETS / "scr01-home-ui-1.7.27.zip": {
+    ASSETS / "scr01-home-ui-1.7.28.zip": {
         "bin/scbspatch": "50688c893eab8fcf73277590f1b0486f1ba4a63431f568296ddbd864864d3089",
-        "boot-completed.sh": "39e5f022331e98383db9e06e0e125ea97bff3055136f3c87134ea7f16df2c759",
+        "boot-completed.sh": "b6f19382ca21206ed706c5b8fb6a1b7f608e0e7cc7b4f9f1acf0d87f9272be04",
         "customize.sh": "59a66916c4ea6111f9376e1183da8a46be5ca30d7d5044ed79bfcb70715ba5b9",
-        "module.prop": "a5127520748ce3de48332d0fba449e43c40c84b0cc3a9fac6694ecd97dc98051",
+        "module.prop": "dc377eb86b02f8d94a95b264e81bbd957d2e10f9b9a9ac19fe25b1a259257f1f",
         "patch/MHSHome.bsdiff": "18fb9cd306d221841c322d29470d4d0a9efd1be984e008e679e4d3868f581cbb",
         "skip_mount": "139d0bf2668b9eb865fcb2f6dd4e8a48a2c379cebee8e87120cfcb0e064f8afb",
         "uninstall.sh": "de012db3f34aa294b9bad714f4e022fb1fc7395202a507864ea13b8c4b8784ab",
@@ -100,7 +100,7 @@ ZIP_CONTENTS = {
 
 MODULES = {
     ASSETS / "meta-overlayfs-scr01.zip": ("meta-overlayfs", "1.3.1-scr01.3"),
-    ASSETS / "scr01-home-ui-1.7.27.zip": ("scr01_scroot_menu", "1.7.27"),
+    ASSETS / "scr01-home-ui-1.7.28.zip": ("scr01_scroot_menu", "1.7.28"),
     ASSETS / "scr01-overview-bridge-0.4.36.zip": ("scr01_overview_bridge", "0.4.36"),
 }
 
@@ -129,14 +129,20 @@ EXPECTED_COMPONENTS = {
     ("service", ".ManualFlowGuardService"): "false",
 }
 
+EXPECTED_DIRECT_BOOT_COMPONENTS = {
+    ("activity", ".BootTraceActivity"),
+    ("receiver", ".AutoRootReceiver"),
+    ("service", ".AutoRootService"),
+}
+
 EXPECTED_GRADLE_VALUES = {
     "namespace": "com.scr01.scroot",
     "applicationId": "com.scr01.scroot",
     "compileSdk": "34",
     "minSdk": "30",
     "targetSdk": "30",
-    "versionCode": "1",
-    "versionName": "1.0.0",
+    "versionCode": "2",
+    "versionName": "1.1.0",
 }
 
 def sha256_bytes(data: bytes) -> str:
@@ -401,6 +407,25 @@ def verify_home_runtime_watchdog(data: bytes, label: str) -> None:
     if source.count('if ! home_process_ready "$home_pid"; then') != 2:
         raise ValueError(f"Home process stability-window mismatch: {label}")
 
+def verify_home_unlock_deferral(data: bytes, label: str) -> None:
+    source = data.decode("utf-8")
+    required_once = (
+        '[ -x "$TIMEOUT" ] || {',
+        'user_state=$("$TIMEOUT" -k 1s 8s am get-started-user-state 0 2>/dev/null) ||',
+        'if [ "$user_state" != "RUNNING_UNLOCKED" ]; then',
+        'log_line "deferred: user 0 is $user_state; Home activation waits for unlock"',
+    )
+    if any(source.count(fragment) != 1 for fragment in required_once):
+        raise ValueError(f"Home unlock deferral mismatch: {label}")
+    boot_at = source.find('if [ "$(getprop sys.boot_completed)" != "1" ]; then')
+    timeout_at = source.find('[ -x "$TIMEOUT" ] || {', boot_at)
+    state_at = source.find('user_state=$("$TIMEOUT"', timeout_at)
+    deferred_at = source.find('if [ "$user_state" != "RUNNING_UNLOCKED" ]; then', state_at)
+    settle_at = source.find("\nsleep 5\n", deferred_at)
+    generate_at = source.find("\nif ! ensure_generated_apk; then", settle_at)
+    if not (0 <= boot_at < timeout_at < state_at < deferred_at < settle_at < generate_at):
+        raise ValueError(f"Home unlock deferral ordering mismatch: {label}")
+
 def expected_directories(contents: set[str]) -> set[str]:
     result: set[str] = set()
     for name in contents:
@@ -531,6 +556,10 @@ def verify_zip(
                 archive.read("boot-completed.sh"),
                 f"{path.name}:boot-completed.sh",
             )
+            verify_home_unlock_deferral(
+                archive.read("boot-completed.sh"),
+                f"{path.name}:boot-completed.sh",
+            )
             boot_constants = parse_shell_hashes(archive.read("boot-completed.sh"))
             verify_fail_closed_uninstall(
                 archive.read("uninstall.sh"),
@@ -605,6 +634,16 @@ def verify_manifest(path: Path) -> None:
             components[key] = element.get(f"{ANDROID}exported")
     if components != EXPECTED_COMPONENTS:
         raise ValueError(f"Android component surface mismatch: {components}")
+    direct_boot_components = {
+        (kind, element.get(f"{ANDROID}name") or "")
+        for kind in ("activity", "receiver", "service")
+        for element in application.findall(kind)
+        if element.get(f"{ANDROID}directBootAware") == "true"
+    }
+    if direct_boot_components != EXPECTED_DIRECT_BOOT_COMPONENTS:
+        raise ValueError(
+            f"Android direct-boot component mismatch: {direct_boot_components}"
+        )
     main_activity = application.find("activity[@android:name='.MainActivity']", {
         "android": ANDROID_NAMESPACE,
     })
@@ -633,7 +672,10 @@ def verify_manifest(path: Path) -> None:
         element.get(f"{ANDROID}name")
         for element in receiver.findall("intent-filter/action")
     }
-    if receiver_actions != {"android.intent.action.BOOT_COMPLETED"}:
+    if receiver_actions != {
+        "android.intent.action.LOCKED_BOOT_COMPLETED",
+        "android.intent.action.BOOT_COMPLETED",
+    }:
         raise ValueError("boot receiver intent surface mismatch")
 
 
@@ -692,7 +734,9 @@ def verify_root_flow_security_invariants(source: str) -> None:
     )
     if any(source.count(fragment) != 1 for fragment in health_fragments):
         raise ValueError("RootFlow live system UI health invariant mismatch")
-    if source.count("val appContext = ctx.applicationContext") != 2 or source.count(
+    if source.count("val appContext = ctx.applicationContext") != 1 or source.count(
+        "val appContext = AutoRootPreferences.deviceProtectedContext(ctx)"
+    ) != 1 or source.count(
         "appContext.contentResolver.call("
     ) != 1 or source.count(
         "val receiptFile = File(appContext.filesDir, UI_RECEIPT_FILE)"

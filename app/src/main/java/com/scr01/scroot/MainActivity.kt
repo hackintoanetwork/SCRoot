@@ -1159,7 +1159,10 @@ class MainActivity : Activity() {
 
     private fun loadAutoRootLog() {
         val lines = try {
-            File(filesDir, "auto-root.log").readLines().takeLast(400)
+            File(
+                AutoRootPreferences.deviceProtectedContext(this).filesDir,
+                "auto-root.log"
+            ).readLines().takeLast(400)
         } catch (_: Exception) {
             emptyList()
         }

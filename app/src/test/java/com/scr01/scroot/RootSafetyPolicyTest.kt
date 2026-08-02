@@ -1,5 +1,6 @@
 package com.scr01.scroot
 
+import android.content.Intent
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import org.junit.Assert.assertFalse
@@ -8,6 +9,50 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RootSafetyPolicyTest {
+
+    @Test
+    fun autoRootReceiverAcceptsLockedAndUnlockedBootOnly() {
+        assertTrue(AutoRootReceiver.handlesBootAction(Intent.ACTION_LOCKED_BOOT_COMPLETED))
+        assertTrue(AutoRootReceiver.handlesBootAction(Intent.ACTION_BOOT_COMPLETED))
+        assertFalse(AutoRootReceiver.handlesBootAction(Intent.ACTION_MY_PACKAGE_REPLACED))
+        assertFalse(AutoRootReceiver.handlesBootAction(null))
+    }
+
+    @Test
+    fun bootReceiverDefersOnlyLauncherWorkUntilUserUnlock() {
+        assertEquals(
+            AutoRootService.ACTION_BOOT_ROOT,
+            AutoRootReceiver.serviceActionForBoot(
+                Intent.ACTION_LOCKED_BOOT_COMPLETED,
+                uiDeferred = false,
+                userUnlocked = false
+            )
+        )
+        assertEquals(
+            AutoRootService.ACTION_BOOT_UI,
+            AutoRootReceiver.serviceActionForBoot(
+                Intent.ACTION_BOOT_COMPLETED,
+                uiDeferred = true,
+                userUnlocked = true
+            )
+        )
+        assertEquals(
+            null,
+            AutoRootReceiver.serviceActionForBoot(
+                Intent.ACTION_BOOT_COMPLETED,
+                uiDeferred = true,
+                userUnlocked = false
+            )
+        )
+        assertEquals(
+            AutoRootService.ACTION_BOOT_ROOT,
+            AutoRootReceiver.serviceActionForBoot(
+                Intent.ACTION_BOOT_COMPLETED,
+                uiDeferred = false,
+                userUnlocked = true
+            )
+        )
+    }
 
     @Test
     fun manualRepairDisablesNativeExploitAttempts() {
@@ -53,6 +98,28 @@ class RootSafetyPolicyTest {
         )
         assertTrue(
             ManualFlowGuardService.shouldStopAfterRejectedStart(currentlyActive = false)
+        )
+    }
+
+    @Test
+    fun deferredUiShutdownDoesNotRewriteTheCompletedRootAttempt() {
+        assertTrue(
+            AutoRootService.shouldFinalizeAutomaticAttempt(
+                wasRunning = true,
+                action = AutoRootService.ACTION_BOOT_ROOT
+            )
+        )
+        assertFalse(
+            AutoRootService.shouldFinalizeAutomaticAttempt(
+                wasRunning = true,
+                action = AutoRootService.ACTION_BOOT_UI
+            )
+        )
+        assertFalse(
+            AutoRootService.shouldFinalizeAutomaticAttempt(
+                wasRunning = false,
+                action = AutoRootService.ACTION_BOOT_ROOT
+            )
         )
     }
 
@@ -638,7 +705,7 @@ class RootSafetyPolicyTest {
     @Test
     fun stagedUiCleanupKeepsOnlyCurrentSignedAssets() {
         assertFalse(
-            RootFlow.shouldPruneStagedUiFile("scr01-home-ui-1.7.27.zip")
+            RootFlow.shouldPruneStagedUiFile("scr01-home-ui-1.7.28.zip")
         )
         assertFalse(
             RootFlow.shouldPruneStagedUiFile("scr01-overview-bridge-0.4.36.zip")
@@ -659,7 +726,7 @@ class RootSafetyPolicyTest {
             "01234567-89ab-cdef-0123-456789abcdef"
         )
         assertEquals("format=2", receipt.first())
-        assertTrue(receipt.contains("scr01_scroot_menu=1.7.27"))
+        assertTrue(receipt.contains("scr01_scroot_menu=1.7.28"))
         assertTrue(receipt.contains("scr01_overview_bridge=0.4.36"))
         assertTrue(receipt.any { it.matches(Regex("home_archive=[0-9a-f]{64}")) })
         assertTrue(receipt.any { it.matches(Regex("overview_archive=[0-9a-f]{64}")) })
@@ -706,5 +773,86 @@ class RootSafetyPolicyTest {
         assertTrue(RootFlow.hasNoSplitApks(null))
         assertTrue(RootFlow.hasNoSplitApks(emptyArray()))
         assertFalse(RootFlow.hasNoSplitApks(arrayOf("/data/app/example/split_config.apk")))
+    }
+
+    @Test
+    fun nativeTerminalReceiptRequiresExactlyOneKnownOutcome() {
+        val receipt = RootFlow.parseNativeResult(
+            listOf(
+                "[pressure] step=40 free=90000KiB available=800000KiB",
+                "[result] PGD_AMBIGUOUS phase=post-uaf detail=reboot_required"
+            )
+        )
+        assertEquals(RootFlow.NativeOutcome.PGD_AMBIGUOUS, receipt?.outcome)
+        assertEquals("post-uaf", receipt?.phase)
+        assertEquals("reboot_required", receipt?.detail)
+
+        assertEquals(null, RootFlow.parseNativeResult(emptyList()))
+        assertEquals(
+            null,
+            RootFlow.parseNativeResult(
+                listOf(
+                    "[result] SAFE_ABORT phase=preflight detail=target_or_resource_gate",
+                    "[result] SAFE_ABORT phase=preflight detail=target_or_resource_gate"
+                )
+            )
+        )
+        assertEquals(
+            null,
+            RootFlow.parseNativeResult(
+                listOf("[result] UNKNOWN phase=preflight detail=invalid")
+            )
+        )
+    }
+
+    @Test
+    fun nativeTerminalReceiptMustMatchExitAndCannotBeTimedOut() {
+        val receipt = RootFlow.parseNativeResult(
+            listOf("[result] PATCH_DIRTY phase=verify detail=root_not_observed")
+        )
+        assertTrue(RootFlow.nativeResultProtocolValid(receipt, 25, false))
+        assertFalse(RootFlow.nativeResultProtocolValid(receipt, 0, false))
+        assertFalse(RootFlow.nativeResultProtocolValid(receipt, 25, true))
+        assertFalse(RootFlow.nativeResultProtocolValid(null, 25, false))
+        assertTrue(receipt?.outcome?.postUaf == true)
+        assertTrue(receipt?.outcome?.allowsHookProbe == true)
+
+        val safeAbort = RootFlow.parseNativeResult(
+            listOf("[result] SAFE_ABORT phase=preflight detail=target_or_resource_gate")
+        )
+        assertFalse(safeAbort?.outcome?.postUaf == true)
+        assertFalse(safeAbort?.outcome?.allowsHookProbe == true)
+    }
+
+    @Test
+    fun bootIntegrityGateRequiresTheExactLockedGreenVbmetaProfile() {
+        val exact = mapOf(
+            "ro.boot.verifiedbootstate" to "green",
+            "ro.boot.flash.locked" to "1",
+            "ro.boot.vbmeta.device_state" to "locked",
+            "ro.boot.vbmeta.digest" to
+                "0ab23dc077c30cf74af348898ce4e04473773db0257d1ed85ca3e5a4c35d0c49",
+            "ro.boot.vbmeta.hash_alg" to "sha256",
+            "ro.boot.veritymode" to "enforcing"
+        )
+        assertEquals(null, RootFlow.bootIntegrityMismatch(exact))
+        assertEquals(
+            "verified boot state",
+            RootFlow.bootIntegrityMismatch(
+                exact + ("ro.boot.verifiedbootstate" to "orange")
+            )
+        )
+        assertEquals(
+            "bootloader lock",
+            RootFlow.bootIntegrityMismatch(exact + ("ro.boot.flash.locked" to "0"))
+        )
+        assertEquals(
+            "vbmeta digest",
+            RootFlow.bootIntegrityMismatch(exact + ("ro.boot.vbmeta.digest" to "deadbeef"))
+        )
+        assertEquals(
+            "verity mode",
+            RootFlow.bootIntegrityMismatch(exact - "ro.boot.veritymode")
+        )
     }
 }

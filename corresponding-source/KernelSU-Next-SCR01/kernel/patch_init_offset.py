@@ -9,8 +9,8 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
 
-EXPECTED_INPUT = "7c433c1fd5d8a081f4eec0f97c24041f6c08833c2f430899663a13da91ae4354"
-EXPECTED_OUTPUT = "1cec66df04a0578e315565658198cf1af26f976cdac11ab3755bb5190d7138da"
+EXPECTED_INPUT = "0a37c39e94f816b7c769efa583e0134d4e3331a38d6c93a926b9373229e70ebd"
+EXPECTED_OUTPUT = "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9"
 
 
 def digest(data: bytes) -> str:
@@ -18,8 +18,12 @@ def digest(data: bytes) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: patch_init_offset.py input-ksu_glue.ko output-ksu_glue.ko")
+    allow_unpinned = len(sys.argv) == 4 and sys.argv[3] == "--allow-unpinned"
+    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and not allow_unpinned):
+        raise SystemExit(
+            "usage: patch_init_offset.py input-ksu_glue.ko output-ksu_glue.ko "
+            "[--allow-unpinned]"
+        )
     source_path = Path(sys.argv[1])
     output_path = Path(sys.argv[2])
     if not source_path.is_file():
@@ -28,7 +32,7 @@ def main() -> None:
         raise SystemExit("output ksu_glue.ko already exists")
     with source_path.open("rb") as source:
         data = bytearray(source.read())
-        if digest(data) != EXPECTED_INPUT:
+        if digest(data) != EXPECTED_INPUT and not allow_unpinned:
             raise SystemExit("unexpected unpatched ksu_glue.ko hash")
         source.seek(0)
         elf = ELFFile(source)
@@ -60,11 +64,12 @@ def main() -> None:
                     matches += 1
         if matches != 1:
             raise SystemExit(f"expected one init_module relocation, found {matches}")
-    if digest(data) != EXPECTED_OUTPUT:
+    output_digest = digest(data)
+    if output_digest != EXPECTED_OUTPUT and not allow_unpinned:
         raise SystemExit("patched ksu_glue.ko hash mismatch")
     with output_path.open("xb") as destination:
         destination.write(data)
-    print(EXPECTED_OUTPUT)
+    print(output_digest)
 
 
 if __name__ == "__main__":

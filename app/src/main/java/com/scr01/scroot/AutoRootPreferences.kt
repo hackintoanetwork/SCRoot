@@ -2,10 +2,13 @@ package com.scr01.scroot
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
+import android.os.UserManager
 import java.io.File
 
 object AutoRootPreferences {
     private const val PREFS_NAME = "auto_root"
+    private const val KEY_DEVICE_STORAGE_READY = "device_storage_ready"
     private const val KEY_ENABLED = "enabled"
     private const val KEY_BOOT_ID = "attempt_boot_id"
     private const val KEY_STATUS = "attempt_status"
@@ -22,6 +25,7 @@ object AutoRootPreferences {
     private const val KEY_TRACE_CREATED_COUNT = "trace_created_count"
     private const val KEY_TRACE_VISIBLE_AT = "trace_visible_at"
     private const val KEY_TRACE_VISIBLE_COUNT = "trace_visible_count"
+    private const val KEY_UI_DEFERRED_BOOT_ID = "ui_deferred_boot_id"
     private const val SHARED_LOCK_PREFIX = "native-attempt-"
     private const val MAX_DETAIL_CHARS = 512
     private val BOOT_ID_PATTERN = Regex(
@@ -99,13 +103,51 @@ object AutoRootPreferences {
         else -> STATUS_REBOOT_REQUIRED
     }
 
+    internal fun deviceProtectedContext(context: Context): Context {
+        val application = context.applicationContext
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            application.createDeviceProtectedStorageContext()
+        } else {
+            application
+        }
+    }
+
+    private fun userUnlocked(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return true
+        return context.getSystemService(UserManager::class.java)?.isUserUnlocked == true
+    }
+
+    @Synchronized
     private fun prefs(context: Context) =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        deviceProtectedContext(context).let { protectedContext ->
+            var preferences = protectedContext.getSharedPreferences(
+                PREFS_NAME,
+                Context.MODE_PRIVATE
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                !preferences.getBoolean(KEY_DEVICE_STORAGE_READY, false) &&
+                userUnlocked(context.applicationContext)
+            ) {
+                protectedContext.moveSharedPreferencesFrom(
+                    context.applicationContext,
+                    PREFS_NAME
+                )
+                preferences = protectedContext.getSharedPreferences(
+                    PREFS_NAME,
+                    Context.MODE_PRIVATE
+                )
+                preferences.edit()
+                    .putBoolean(KEY_DEVICE_STORAGE_READY, true)
+                    .commit()
+            }
+            preferences
+        }
 
     private fun sharedExploitLock(context: Context, bootId: String): File? =
-        context.applicationContext.getExternalFilesDir(null)?.let { root ->
-            File(root, "$SHARED_LOCK_PREFIX$bootId.lock")
-        }
+        File(
+            deviceProtectedContext(context).noBackupFilesDir,
+            "$SHARED_LOCK_PREFIX$bootId.lock"
+        )
 
     fun isEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_ENABLED, false)
@@ -141,7 +183,31 @@ object AutoRootPreferences {
             .remove(KEY_TRACE_CREATED_COUNT)
             .remove(KEY_TRACE_VISIBLE_AT)
             .remove(KEY_TRACE_VISIBLE_COUNT)
+            .remove(KEY_UI_DEFERRED_BOOT_ID)
             .commit()
+    }
+
+    @Synchronized
+    fun markUiDeferredForCurrentBoot(context: Context): Boolean {
+        val bootId = currentBootId() ?: return false
+        val preferences = prefs(context)
+        if (preferences.getString(KEY_BOOT_ID, null) != bootId) return false
+        return preferences.edit()
+            .putString(KEY_UI_DEFERRED_BOOT_ID, bootId)
+            .commit()
+    }
+
+    fun isUiDeferredForCurrentBoot(context: Context): Boolean {
+        val bootId = currentBootId() ?: return false
+        return prefs(context).getString(KEY_UI_DEFERRED_BOOT_ID, null) == bootId
+    }
+
+    @Synchronized
+    fun clearUiDeferredForCurrentBoot(context: Context): Boolean {
+        val bootId = currentBootId() ?: return false
+        val preferences = prefs(context)
+        if (preferences.getString(KEY_UI_DEFERRED_BOOT_ID, null) != bootId) return true
+        return preferences.edit().remove(KEY_UI_DEFERRED_BOOT_ID).commit()
     }
 
     @Synchronized
@@ -271,7 +337,7 @@ object AutoRootPreferences {
         val preferences = prefs(context)
         if (preferences.getString(KEY_EXPLOIT_BOOT_ID, null) == bootId) return false
 
-        val sharedRoot = context.getExternalFilesDir(null) ?: return false
+        val sharedRoot = deviceProtectedContext(context).noBackupFilesDir
         if (!sharedRoot.exists() && !sharedRoot.mkdirs()) return false
         pruneOldSharedExploitLocks(sharedRoot, bootId)
         val sharedLock = sharedExploitLock(context, bootId) ?: return false

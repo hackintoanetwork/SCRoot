@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.UserManager
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
@@ -48,6 +49,8 @@ object RootFlow {
     private const val EXPECTED_INCREMENTAL = "SCR01KDU1AVK2"
     private const val EXPECTED_SDK = 30
     private const val EXPECTED_PAGE_SIZE = 4096L
+    private const val EXPECTED_VBMETA_DIGEST =
+        "0ab23dc077c30cf74af348898ce4e04473773db0257d1ed85ca3e5a4c35d0c49"
     private const val EXPECTED_META_ID = "meta-overlayfs"
     private const val EXPECTED_META_VERSION = "1.3.1-scr01.3"
     private const val META_MODULE_PROP_SHA256 =
@@ -64,10 +67,10 @@ object RootFlow {
         "0421cf45ab6b1fb51c7c2b1c8a93a29976c967ab8b0bbfadec1a45fbb66475ec"
     private const val META_MODULE_UNINSTALL_SHA256 =
         "cc0e4342a39f8da1dadf5e96f6b0da1884e7bb10de670cbcb74d4bd4ed3e7e49"
-    private const val HOME_UI_ASSET = "scr01-home-ui-1.7.27.zip"
+    private const val HOME_UI_ASSET = "scr01-home-ui-1.7.28.zip"
     private const val OVERVIEW_UI_ASSET = "scr01-overview-bridge-0.4.36.zip"
     private const val HOME_UI_MODULE_ID = "scr01_scroot_menu"
-    private const val HOME_UI_VERSION = "1.7.27"
+    private const val HOME_UI_VERSION = "1.7.28"
     private const val HOME_PACKAGE = "com.samsung.android.mhshome"
     private const val HOME_HEALTH_ACTION = "com.scr01.scroot.action.HOME_HEALTH"
     private const val HOME_HEALTH_PROTOCOL = 1
@@ -92,11 +95,11 @@ object RootFlow {
     private const val HOME_UI_DELTA_SHA256 =
         "18fb9cd306d221841c322d29470d4d0a9efd1be984e008e679e4d3868f581cbb"
     private const val HOME_UI_BOOT_SHA256 =
-        "39e5f022331e98383db9e06e0e125ea97bff3055136f3c87134ea7f16df2c759"
+        "b6f19382ca21206ed706c5b8fb6a1b7f608e0e7cc7b4f9f1acf0d87f9272be04"
     private const val HOME_UI_UNINSTALL_SHA256 =
         "de012db3f34aa294b9bad714f4e022fb1fc7395202a507864ea13b8c4b8784ab"
     private const val HOME_UI_MODULE_PROP_SHA256 =
-        "a5127520748ce3de48332d0fba449e43c40c84b0cc3a9fac6694ecd97dc98051"
+        "dc377eb86b02f8d94a95b264e81bbd957d2e10f9b9a9ac19fe25b1a259257f1f"
     private const val HOME_UI_SKIP_MOUNT_SHA256 =
         "139d0bf2668b9eb865fcb2f6dd4e8a48a2c379cebee8e87120cfcb0e064f8afb"
     private const val OVERVIEW_UI_PATCHER_SHA256 = HOME_UI_PATCHER_SHA256
@@ -117,19 +120,19 @@ object RootFlow {
         "^(scr01-home-ui|scr01-overview-bridge)-[0-9]+\\.[0-9]+\\.[0-9]+\\.zip(?:\\.new)?$"
     )
     private val EXPECTED_ARTIFACT_SHA256 = mapOf(
-        "libexploit.so" to "ea4cd0b16bc8c08885b2ab27a92700a0519e619c97026d627b3f74d5dec80a54",
+        "libexploit.so" to "86a8a98029e913b16abf5480bcecf8fe036cb0339de9c7b91dc5c0749898dece",
         "librootsh.so" to "77cfc2e1e8fd710cb18b442f950a76b63e0e0f30214c1131aed49d8ff85edc04",
         "libbootstrap.so" to "e81028efeaf44aba81607aa6116cc1273ad8f4d4eee4ec58ff5e14be061fca90",
         "libmemprep.so" to "a743f6c5432ec8072faa1bc47e07d8811135905eb3e458e8f4d892b192cadcee",
         "libksud.so" to "637676421190aeec504093707ad675a45faaf11bd4b53129d52e150490902cca",
-        "libksuglue.so" to "1cec66df04a0578e315565658198cf1af26f976cdac11ab3755bb5190d7138da",
+        "libksuglue.so" to "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9",
         "libksucheck.so" to "0abb36169ff0864ee659e5b40f7666b01cf36d765e3216d9a4d14695f92817d6",
         "libadbroot.so" to "5562adc1e5c6f52fb91f469a1a7d3480050d8697fb5dedbd7fb386d282cd88b8",
         "manager.apk" to "80a9e4b1ba9644f361add3e003e1075bd4f9cb374bbde465c2b57522b5288ba9",
         "meta-overlayfs-scr01.zip" to
             "df4b4a33c9974eb873e62ad01fa7229e9648cc848d032f6192a89b055cb9528c",
         HOME_UI_ASSET to
-            "c75717aa479708fd496b3204bad6290f481e61109771cde3ac557f95a0befc23",
+            "0f2e8d8ec02b8ab78fc41f3a32df126d282a2f78242d1dd4f9bf85b33d06cc05",
         OVERVIEW_UI_ASSET to
             "a3bcae90900fd02436108b8644fb5aa9e247816b98fb8fbe4f0c9ee81ce45981"
     )
@@ -162,20 +165,59 @@ object RootFlow {
         "[reclaim]", "jit_freed", "Found freed_idx",
         "[pgd]", "Found pgd", "[patch]", "[pte]", "[1/3]", "[2/3]",
         "[2.5]", "[3/3]", "[slot]", "[fanout]", "[stage]", "[event]", "[abort]",
-        "[probe]", "[broadcast]", "[time]",
+        "[probe]", "[broadcast]", "[selftest]", "[result]", "[time]",
         "=== ROOT", "uid=", "Killed", "INSMOD_RC=", "LATE_LOAD_RC=",
-        "KSUD_RC=", "PRE_CROWN_RC=", "BRINGUP ", "CROWN_RC="
+        "KSUD_RC=", "PRE_CROWN_RC=", "PATCH_RECEIPT=", "BRINGUP ", "CROWN_RC="
     )
-    private val COMPLETE_WRITE_RECEIPT = Regex(
-        """^\[broadcast] done defex=[1-9]\d* enforce=[1-9]\d* """ +
-            """avc=\{[1-9]\d*,[1-9]\d*,[1-9]\d*\} """ +
-            """hooks=\{version:[1-9]\d*,selinux:[1-9]\d*\}$"""
+    private val NATIVE_RESULT_LINE = Regex(
+        """^\[result] ([A-Z_]+) phase=([a-z0-9-]+) detail=([a-z0-9_]+)$"""
     )
 
     enum class ExecutionMode {
         MANUAL,
         AUTO
     }
+
+    internal enum class NativeOutcome(
+        val exitCode: Int,
+        val postUaf: Boolean,
+        val allowsHookProbe: Boolean
+    ) {
+        ROOT_VERIFIED(0, true, false),
+        SAFE_ABORT(20, false, false),
+        RECLAIM_MISS(21, false, false),
+        UAF_DIRTY(22, true, false),
+        PGD_AMBIGUOUS(23, true, false),
+        WRITE_PARTIAL(24, true, false),
+        PATCH_DIRTY(25, true, true)
+    }
+
+    internal data class NativeResultReceipt(
+        val outcome: NativeOutcome,
+        val phase: String,
+        val detail: String
+    )
+
+    internal fun parseNativeResult(lines: List<String>): NativeResultReceipt? {
+        val matches = lines.mapNotNull { line ->
+            val match = NATIVE_RESULT_LINE.matchEntire(line.trim()) ?: return@mapNotNull null
+            val outcome = runCatching {
+                NativeOutcome.valueOf(match.groupValues[1])
+            }.getOrNull() ?: return@mapNotNull null
+            NativeResultReceipt(
+                outcome,
+                match.groupValues[2],
+                match.groupValues[3]
+            )
+        }
+        return matches.singleOrNull()
+    }
+
+    internal fun nativeResultProtocolValid(
+        receipt: NativeResultReceipt?,
+        exitCode: Int,
+        timedOut: Boolean
+    ): Boolean = !timedOut && receipt != null && receipt.outcome.exitCode == exitCode
 
     fun isRunning(): Boolean = flowRunning.get()
 
@@ -568,6 +610,46 @@ object RootFlow {
                 "primary ABI"
             pageSize != EXPECTED_PAGE_SIZE ->
                 "page size"
+            else -> bootIntegrityMismatch(readBootIntegrityProperties())
+        }
+    }
+
+    private fun readSystemProperty(name: String): String? {
+        val result = execBuffered(
+            "/system/bin/getprop",
+            listOf(name),
+            timeoutMs = 2_000L
+        )
+        if (result.timedOut || result.rc != 0) return null
+        return result.lines.singleOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun readBootIntegrityProperties(): Map<String, String?> =
+        listOf(
+            "ro.boot.verifiedbootstate",
+            "ro.boot.flash.locked",
+            "ro.boot.vbmeta.device_state",
+            "ro.boot.vbmeta.digest",
+            "ro.boot.vbmeta.hash_alg",
+            "ro.boot.veritymode"
+        ).associateWith(::readSystemProperty)
+
+    internal fun bootIntegrityMismatch(
+        properties: Map<String, String?>
+    ): String? {
+        return when {
+            properties["ro.boot.verifiedbootstate"] != "green" ->
+                "verified boot state"
+            properties["ro.boot.flash.locked"] != "1" ->
+                "bootloader lock"
+            properties["ro.boot.vbmeta.device_state"] != "locked" ->
+                "vbmeta device state"
+            properties["ro.boot.vbmeta.hash_alg"] != "sha256" ->
+                "vbmeta hash algorithm"
+            properties["ro.boot.vbmeta.digest"] != EXPECTED_VBMETA_DIGEST ->
+                "vbmeta digest"
+            properties["ro.boot.veritymode"] != "enforcing" ->
+                "verity mode"
             else -> null
         }
     }
@@ -1490,11 +1572,17 @@ object RootFlow {
         val managerCrowned: Boolean,
         val userspaceReady: Boolean,
         val exploitAttempted: Boolean,
-        val systemUiIntegrated: Boolean = false
+        val systemUiIntegrated: Boolean = false,
+        val systemUiDeferred: Boolean = false
     )
 
+    internal fun isUserUnlockedForSystemUi(ctx: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return true
+        return ctx.getSystemService(UserManager::class.java)?.isUserUnlocked == true
+    }
+
     fun isSystemUiIntegratedForCurrentBoot(ctx: Context): Boolean {
-        val appContext = ctx.applicationContext
+        val appContext = AutoRootPreferences.deviceProtectedContext(ctx)
         val bootId = AutoRootPreferences.currentBootId() ?: return false
         val expected = expectedSystemUiReceipt(bootId)
         val receiptFile = File(appContext.filesDir, UI_RECEIPT_FILE)
@@ -1640,14 +1728,15 @@ object RootFlow {
         executionMode: ExecutionMode,
         ui: (String) -> Unit
     ): Result {
+        val flowContext = AutoRootPreferences.deviceProtectedContext(ctx)
         if (!flowRunning.compareAndSet(false, true)) {
             val message = "[BLOCKED] Another SCRoot pipeline is already running."
             ui(message)
-            bootLog(ctx, message)
+            bootLog(flowContext, message)
             return Result(false, isModuleLoaded(), false, false, false)
         }
         return try {
-            runLocked(ctx, maxExploitTries, launchManager, executionMode, ui)
+            runLocked(flowContext, maxExploitTries, launchManager, executionMode, ui)
         } finally {
             flowRunning.set(false)
         }
@@ -1756,6 +1845,12 @@ object RootFlow {
             val steadyScript =
                 managerRefresh +
                     metaModuleVerificationShell() +
+                    "PATCH_RECEIPT=\$(cat /sys/module/ksu_glue/parameters/patch_receipt_valid 2>/dev/null); " +
+                    "echo PATCH_RECEIPT=\$PATCH_RECEIPT; " +
+                    "[ \"\$PATCH_RECEIPT\" = Y ] || exit 43; " +
+                    "HOOK_DEGRADED=\$(cat /sys/module/ksu_glue/parameters/hook_transaction_degraded 2>/dev/null); " +
+                    "echo HOOK_DEGRADED=\$HOOK_DEGRADED; " +
+                    "[ \"\$HOOK_DEGRADED\" = N ] || exit 44; " +
                     "pm enable $MANAGER_PKG >/dev/null || exit 37; " +
                     "pm path $MANAGER_PKG >/dev/null 2>&1 || exit 37; " +
                     "APP_UID=\$(pm list packages -U $MANAGER_PKG | " +
@@ -1805,6 +1900,12 @@ object RootFlow {
                 }
             }
             val ksudReady = !ksudInstall.timedOut && ksudInstall.rc == 0
+            val patchReceiptReady = ksudInstall.lines.any {
+                it.trim() == "PATCH_RECEIPT=Y"
+            }
+            val hookTransactionHealthy = ksudInstall.lines.any {
+                it.trim() == "HOOK_DEGRADED=N"
+            }
             ksudInstall.lines.filter { it.isNotBlank() }.forEach { log("  $it") }
             log(
                 "  ksud=" + if (ksudReady) {
@@ -1821,7 +1922,9 @@ object RootFlow {
             if (installed.ok && ksudReady && moduleAppId != expectedAppId) {
                 log("  repairing manager crown mismatch")
                 val recoverScript =
-                    "echo $expectedAppId > /sys/module/ksu_glue/parameters/manager_appid && " +
+                    "[ \"\$(cat /sys/module/ksu_glue/parameters/patch_receipt_valid 2>/dev/null)\" = Y ] && " +
+                        "[ \"\$(cat /sys/module/ksu_glue/parameters/hook_transaction_degraded 2>/dev/null)\" = N ] && " +
+                        "echo $expectedAppId > /sys/module/ksu_glue/parameters/manager_appid && " +
                         "echo 1 > /sys/module/ksu_glue/parameters/restore_sel_read_enforce && " +
                         "am force-stop $MANAGER_PKG" +
                         if (launchManager) {
@@ -1839,19 +1942,27 @@ object RootFlow {
                 }
             }
             val crowned = installed.ok && moduleAppId == expectedAppId
+            var systemUiDeferred = false
             val systemUiIntegrated = if (crowned && ksudReady) {
-                provisionSystemUi(ctx, log)
+                if (isUserUnlockedForSystemUi(ctx)) {
+                    provisionSystemUi(ctx, log)
+                } else {
+                    systemUiDeferred = true
+                    log("[ui] Home integration deferred until user unlock")
+                    false
+                }
             } else {
                 log("[WARNING] Launcher integration deferred until KernelSU setup is healthy.")
                 false
             }
             return Result(
                 rooted = true,
-                moduleLoaded = true,
+                moduleLoaded = patchReceiptReady && hookTransactionHealthy,
                 managerCrowned = crowned,
                 userspaceReady = ksudReady,
                 exploitAttempted = false,
-                systemUiIntegrated = systemUiIntegrated
+                systemUiIntegrated = systemUiIntegrated,
+                systemUiDeferred = systemUiDeferred
             )
         }
 
@@ -2023,17 +2134,37 @@ object RootFlow {
             log("  ── exit=${run.rc} timeout=${run.timedOut} ──")
             rooted = rootReady(rootsh)
 
-            val completeWriteReceipt = run.lines.any {
-                COMPLETE_WRITE_RECEIPT.matches(it.trim())
+            val nativeReceipt = parseNativeResult(run.lines)
+            val nativeProtocolValid = nativeResultProtocolValid(
+                nativeReceipt,
+                run.rc,
+                run.timedOut
+            )
+            if (!nativeProtocolValid) {
+                log(
+                    "  [ERROR] Native terminal receipt is missing, duplicated, " +
+                        "timed out, or does not match exit=${run.rc}."
+                )
+                log("  Kernel state is untrusted. Reboot is required; retry is blocked.")
+            } else if (nativeReceipt != null) {
+                log(
+                    "  native result: ${nativeReceipt.outcome.name} " +
+                        "phase=${nativeReceipt.phase} detail=${nativeReceipt.detail}"
+                )
+                if (nativeReceipt.outcome.postUaf &&
+                    nativeReceipt.outcome != NativeOutcome.ROOT_VERIFIED) {
+                    log("  Post-UAF state detected. No further exploit action is allowed this boot.")
+                }
             }
-            if (!rooted && (run.rc == 12 || completeWriteReceipt)) {
+            if (!rooted && nativeProtocolValid &&
+                nativeReceipt?.outcome?.allowsHookProbe == true) {
                 val cpuCount = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
                 val graceMs = 30_000L
                 val probeStarted = SystemClock.elapsedRealtime()
                 val probeDeadline = probeStarted + graceMs
                 var round = 0
                 log(
-                    "  payload write verified (exit=${run.rc}) — " +
+                    "  native patch receipt accepted (exit=${run.rc}) — " +
                         "8MiB I-cache eviction + per-CPU hook verification " +
                         "(up to ${graceMs / 1000}s, no exploit rerun)"
                 )
@@ -2079,7 +2210,8 @@ object RootFlow {
                 } else {
                     AutoRootPreferences.STATUS_REBOOT_REQUIRED
                 },
-                "native_exit=${run.rc} timeout=${run.timedOut} root=$rooted"
+                "native_exit=${run.rc} timeout=${run.timedOut} " +
+                    "outcome=${nativeReceipt?.outcome?.name ?: "INVALID"} root=$rooted"
             )
         }
         if (!rooted) {
@@ -2129,14 +2261,28 @@ object RootFlow {
             val ksudReady = bringup.lines.any {
                 it.contains("KSUD_RC=0") && it.contains("verify_rc=0")
             }
-            if (!bringup.timedOut && ksudReady && isModuleLoaded() &&
+            val patchReceiptReady = bringup.lines.any {
+                it.trim().endsWith("PATCH_RECEIPT=Y")
+            }
+            val hookTransactionHealthy = bringup.lines.any {
+                it.trim().endsWith("HOOK_DEGRADED=N")
+            }
+            if (!bringup.timedOut && ksudReady && patchReceiptReady &&
+                hookTransactionHealthy &&
+                isModuleLoaded() &&
                 packageInfo(ctx, MANAGER_PKG) != null) break
             if (attempt < 3) {
                 log("  retrying userspace bring-up ${attempt + 1}/3...")
             }
         }
 
-        val mod = isModuleLoaded()
+        val patchReceiptReady = bringup.lines.any {
+            it.trim().endsWith("PATCH_RECEIPT=Y")
+        }
+        val hookTransactionHealthy = bringup.lines.any {
+            it.trim().endsWith("HOOK_DEGRADED=N")
+        }
+        val mod = isModuleLoaded() && patchReceiptReady && hookTransactionHealthy
         val ksudReady = !bringup.timedOut && bringup.lines.any {
             it.contains("KSUD_RC=0") && it.contains("verify_rc=0")
         }
@@ -2152,7 +2298,11 @@ object RootFlow {
                 "LAUNCH=0"
             }
             val crownScript =
-                "echo $appId > /sys/module/ksu_glue/parameters/manager_appid; CROWN=\$?; " +
+                "PATCH_RECEIPT=\$(cat /sys/module/ksu_glue/parameters/patch_receipt_valid 2>/dev/null); " +
+                    "HOOK_DEGRADED=\$(cat /sys/module/ksu_glue/parameters/hook_transaction_degraded 2>/dev/null); " +
+                    "if [ \"\$PATCH_RECEIPT\" = Y ] && [ \"\$HOOK_DEGRADED\" = N ]; then " +
+                    "echo $appId > /sys/module/ksu_glue/parameters/manager_appid; CROWN=\$?; " +
+                    "else CROWN=43; fi; " +
                     "RESTORE=skip; SELINUX=unknown; LAUNCH=skip; " +
                     "if [ \$CROWN -eq 0 ]; then " +
                     "am force-stop $MANAGER_PKG; " +
@@ -2174,8 +2324,15 @@ object RootFlow {
                         it.contains("APPID=$appId")
                 } && moduleManagerAppId() == appId
         }
+        var systemUiDeferred = false
         val systemUiIntegrated = if (mod && mgr && ksudReady) {
-            provisionSystemUi(ctx, log)
+            if (isUserUnlockedForSystemUi(ctx)) {
+                provisionSystemUi(ctx, log)
+            } else {
+                systemUiDeferred = true
+                log("[ui] Home integration deferred until user unlock")
+                false
+            }
         } else {
             log("[WARNING] Launcher integration deferred until KernelSU setup is healthy.")
             false
@@ -2183,6 +2340,8 @@ object RootFlow {
         log(
             if (mod && systemUiIntegrated) {
                 "[OK] complete (KernelSU + SCR-01 system UI integrated)"
+            } else if (mod && systemUiDeferred) {
+                "[OK] KernelSU ready; Home integration will finish after unlock"
             } else if (mod) {
                 "[WARNING] KernelSU is live, but launcher integration needs repair"
             } else {
@@ -2195,7 +2354,8 @@ object RootFlow {
             managerCrowned = mgr,
             userspaceReady = ksudReady,
             exploitAttempted = true,
-            systemUiIntegrated = systemUiIntegrated
+            systemUiIntegrated = systemUiIntegrated,
+            systemUiDeferred = systemUiDeferred
         )
     }
 
@@ -2218,6 +2378,13 @@ object RootFlow {
         append("INSMOD_RC=\$?\n")
         append("module_loaded; MOD=\$?\n")
         append("echo INSMOD_RC=\$INSMOD_RC module=\$([ \$MOD -eq 0 ] && echo 1 || echo 0)\n")
+
+        append("if [ \$MOD -eq 0 ]; then PATCH_RECEIPT=\$(cat /sys/module/ksu_glue/parameters/patch_receipt_valid 2>/dev/null); else PATCH_RECEIPT=N; fi\n")
+        append("echo PATCH_RECEIPT=\$PATCH_RECEIPT\n")
+        append("[ \$MOD -eq 0 ] && [ \"\$PATCH_RECEIPT\" = Y ] || exit 43\n")
+        append("if [ \$MOD -eq 0 ]; then HOOK_DEGRADED=\$(cat /sys/module/ksu_glue/parameters/hook_transaction_degraded 2>/dev/null); else HOOK_DEGRADED=Y; fi\n")
+        append("echo HOOK_DEGRADED=\$HOOK_DEGRADED\n")
+        append("[ \$MOD -eq 0 ] && [ \"\$HOOK_DEGRADED\" = N ] || exit 44\n")
 
         append("if [ \$MOD -eq 0 ]; then echo 1 > /sys/module/ksu_glue/parameters/restore_sel_read_enforce; EARLY_RESTORE_RC=\$?; else EARLY_RESTORE_RC=1; fi\n")
         append("echo EARLY_RESTORE_RC=\$EARLY_RESTORE_RC\n")

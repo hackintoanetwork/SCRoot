@@ -6,13 +6,38 @@ import android.content.Intent
 import android.util.Log
 
 class AutoRootReceiver : BroadcastReceiver() {
+    companion object {
+        internal fun handlesBootAction(action: String?): Boolean =
+            action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+                action == Intent.ACTION_BOOT_COMPLETED
+
+        internal fun serviceActionForBoot(
+            action: String?,
+            uiDeferred: Boolean,
+            userUnlocked: Boolean
+        ): String? = when {
+            action == Intent.ACTION_LOCKED_BOOT_COMPLETED ->
+                AutoRootService.ACTION_BOOT_ROOT
+            action == Intent.ACTION_BOOT_COMPLETED && uiDeferred && userUnlocked ->
+                AutoRootService.ACTION_BOOT_UI
+            action == Intent.ACTION_BOOT_COMPLETED && uiDeferred -> null
+            action == Intent.ACTION_BOOT_COMPLETED -> AutoRootService.ACTION_BOOT_ROOT
+            else -> null
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        if (!handlesBootAction(intent?.action)) return
         if (!AutoRootPreferences.isEnabled(context)) return
+        val serviceAction = serviceActionForBoot(
+            intent?.action,
+            AutoRootPreferences.isUiDeferredForCurrentBoot(context),
+            RootFlow.isUserUnlockedForSystemUi(context)
+        ) ?: return
         if (!AutoRootService.reserveLaunch()) return
 
         val service = Intent(context, AutoRootService::class.java)
-            .setAction(AutoRootService.ACTION_BOOT_ROOT)
+            .setAction(serviceAction)
         try {
             context.startForegroundService(service)
         } catch (error: RuntimeException) {

@@ -50,6 +50,7 @@
 #include <linux/thread_info.h>    /* TIF_SECCOMP, clear_tsk_thread_flag */
 #include <linux/rcupdate.h>
 #include <linux/umh.h>
+#include <linux/stop_machine.h>
 #include <asm/unistd.h>
 #include <asm/cacheflush.h>
 #include <asm/memory.h>
@@ -534,6 +535,21 @@ static void profile_remove_memory(uid_t uid)
 	}
 	mutex_unlock(&profile_lock);
 	ksu_allow_set(uid, false);
+}
+
+static void profile_clear_memory(void)
+{
+	unsigned long flags;
+
+	mutex_lock(&profile_lock);
+	memset(profile_slots, 0, sizeof(profile_slots));
+	default_nonroot_umount = true;
+	mutex_unlock(&profile_lock);
+
+	spin_lock_irqsave(&allow_lock, flags);
+	memset(allow_uids, 0, sizeof(allow_uids));
+	allow_n = 0;
+	spin_unlock_irqrestore(&allow_lock, flags);
 }
 
 static int profile_persist(void)
@@ -2542,17 +2558,314 @@ static long hook_prctl(long option, long a2, long a3, long a4, long a5)
 /* ------------------------------------------------------------------ *
  * 6. vmap RW-alias syscall-table patch (proven ksuhook.c primitive)
  * ------------------------------------------------------------------ */
-static int patch_sct_slot(int nr, unsigned long val, unsigned long *saved)
+struct sct_hook_patch {
+	int nr;
+	unsigned long replacement;
+	unsigned long original;
+	const char *name;
+	bool installed;
+};
+
+static struct sct_hook_patch sct_hooks[] = {
+	{ NR_REBOOT,     (unsigned long)hook_reboot,     0, "reboot",     false },
+	{ NR_FACCESSAT,  (unsigned long)hook_faccessat,  0, "faccessat",  false },
+	{ NR_NEWFSTATAT, (unsigned long)hook_newfstatat, 0, "newfstatat", false },
+	{ NR_EXECVE,     (unsigned long)hook_execve,     0, "execve",     false },
+	{ NR_EXECVEAT,   (unsigned long)hook_execveat,   0, "execveat",   false },
+	{ NR_CONNECT,    (unsigned long)hook_connect,    0, "connect",    false },
+	{ NR_SETUID,     (unsigned long)hook_setuid,     0, "setuid",     false },
+	{ NR_SETGID,     (unsigned long)hook_setgid,     0, "setgid",     false },
+	{ NR_SETRESUID,  (unsigned long)hook_setresuid,  0, "setresuid",  false },
+	{ NR_SETRESGID,  (unsigned long)hook_setresgid,  0, "setresgid",  false },
+	{ NR_SETGROUPS,  (unsigned long)hook_setgroups,  0, "setgroups",  false },
+	{ NR_PRCTL,      (unsigned long)hook_prctl,      0, "prctl",      false },
+	{ NR_SECCOMP,    (unsigned long)hook_seccomp,    0, "seccomp",    false },
+};
+
+static DEFINE_MUTEX(sct_patch_lock);
+static bool sct_hooks_live;
+static bool hook_transaction_degraded;
+module_param(hook_transaction_degraded, bool, 0444);
+#ifdef SCR01_GLUE_FAULT_INJECT
+static int fault_after_hook_writes = -1;
+module_param(fault_after_hook_writes, int, 0400);
+#endif
+
+static int sct_slot_page_offset(int nr, unsigned long *offset)
 {
-	struct page *pg = pfn_to_page(sct_phys >> PAGE_SHIFT);
-	unsigned long *w = vmap(&pg, 1, VM_MAP, PAGE_KERNEL);
-	if (!w) return -ENOMEM;
-	if (saved) *saved = ((unsigned long *)sct_va)[nr];
-	w[nr] = val;
-	vunmap(w);
-	smp_wmb();     /* publish slot before other CPUs read it */
+	unsigned long va_offset = sct_va & ~PAGE_MASK;
+	unsigned long phys_offset = sct_phys & ~PAGE_MASK;
+	unsigned long slot_offset;
+
+	if (!offset || nr < 0 || va_offset != phys_offset ||
+	    !IS_ALIGNED(sct_va, sizeof(unsigned long)) ||
+	    !IS_ALIGNED(sct_phys, sizeof(unsigned long)))
+		return -EINVAL;
+	slot_offset = phys_offset + (unsigned long)nr * sizeof(unsigned long);
+	if (slot_offset > PAGE_SIZE - sizeof(unsigned long))
+		return -ERANGE;
+	*offset = slot_offset;
 	return 0;
 }
+
+static unsigned long *sct_alias_slot(void *mapping, int nr)
+{
+	unsigned long offset;
+
+	if (sct_slot_page_offset(nr, &offset))
+		return NULL;
+	return (unsigned long *)((char *)mapping + offset);
+}
+
+struct sct_transaction {
+	void *mapping;
+	bool install;
+	bool wrote;
+	bool rolled_back;
+	bool recovered_forward;
+	bool degraded;
+	int rc;
+	int failed_index;
+};
+
+static bool sct_transaction_values_match(struct sct_transaction *tx,
+					 bool replacements)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(sct_hooks); i++) {
+		unsigned long *alias = sct_alias_slot(tx->mapping, sct_hooks[i].nr);
+		unsigned long expected = replacements ? sct_hooks[i].replacement :
+							 sct_hooks[i].original;
+		unsigned long live;
+
+		if (!alias) {
+			tx->failed_index = i;
+			return false;
+		}
+		live = READ_ONCE(((unsigned long *)sct_va)[sct_hooks[i].nr]);
+		if (READ_ONCE(*alias) != expected || live != expected) {
+			tx->failed_index = i;
+			return false;
+		}
+	}
+	return true;
+}
+
+static void sct_transaction_write_values(struct sct_transaction *tx,
+					 bool replacements)
+{
+	int i;
+
+	if (replacements) {
+		for (i = 0; i < ARRAY_SIZE(sct_hooks); i++)
+			WRITE_ONCE(*sct_alias_slot(tx->mapping, sct_hooks[i].nr),
+				   sct_hooks[i].replacement);
+	} else {
+		for (i = ARRAY_SIZE(sct_hooks) - 1; i >= 0; i--)
+			WRITE_ONCE(*sct_alias_slot(tx->mapping, sct_hooks[i].nr),
+				   sct_hooks[i].original);
+	}
+	smp_wmb();
+	smp_mb();
+}
+
+static int sct_transaction_stop_machine(void *data)
+{
+	struct sct_transaction *tx = data;
+	bool old_replacements = !tx->install;
+	bool new_replacements = tx->install;
+	int i;
+
+	if (!sct_transaction_values_match(tx, old_replacements)) {
+		tx->rc = tx->install ? -EBUSY : -EUCLEAN;
+		return 0;
+	}
+
+	if (new_replacements) {
+		for (i = 0; i < ARRAY_SIZE(sct_hooks); i++) {
+			WRITE_ONCE(*sct_alias_slot(tx->mapping, sct_hooks[i].nr),
+				   sct_hooks[i].replacement);
+			tx->wrote = true;
+#ifdef SCR01_GLUE_FAULT_INJECT
+			if (fault_after_hook_writes == i + 1) {
+				tx->failed_index = i;
+				tx->rc = -EIO;
+				goto rollback;
+			}
+#endif
+		}
+		if (tx->rc)
+			goto rollback;
+		smp_wmb();
+		smp_mb();
+	} else {
+		sct_transaction_write_values(tx, false);
+		tx->wrote = true;
+	}
+
+	if (sct_transaction_values_match(tx, new_replacements)) {
+		tx->rc = 0;
+		return 0;
+	}
+	tx->rc = -EIO;
+
+rollback:
+	if (!tx->wrote)
+		return 0;
+	sct_transaction_write_values(tx, old_replacements);
+	if (sct_transaction_values_match(tx, old_replacements)) {
+		tx->rolled_back = true;
+		return 0;
+	}
+
+	if (tx->install) {
+		sct_transaction_write_values(tx, true);
+		if (sct_transaction_values_match(tx, true)) {
+			tx->recovered_forward = true;
+			tx->rc = 0;
+			return 0;
+		}
+	}
+
+	tx->degraded = true;
+	tx->rc = 0;
+	return 0;
+}
+
+static int install_sct_hooks_transaction(void)
+{
+	struct page *pg;
+	void *mapping;
+	struct sct_transaction tx = {
+		.install = true,
+		.failed_index = -1,
+	};
+	int i, rc = 0;
+
+	mutex_lock(&sct_patch_lock);
+	if (sct_hooks_live) {
+		rc = -EALREADY;
+		goto out_unlock;
+	}
+	for (i = 0; i < ARRAY_SIZE(sct_hooks); i++) {
+		unsigned long offset;
+		unsigned long slot_value;
+
+		rc = sct_slot_page_offset(sct_hooks[i].nr, &offset);
+		if (rc)
+			goto out_unlock;
+		slot_value = READ_ONCE(((unsigned long *)sct_va)[sct_hooks[i].nr]);
+		if (!slot_value || slot_value == sct_hooks[i].replacement) {
+			pr_err("ksu_glue: refuse hook %s: unexpected original 0x%lx\n",
+			       sct_hooks[i].name, slot_value);
+			rc = -EBUSY;
+			goto out_unlock;
+		}
+		sct_hooks[i].original = slot_value;
+		sct_hooks[i].installed = false;
+	}
+
+	pg = pfn_to_page((sct_phys & PAGE_MASK) >> PAGE_SHIFT);
+	mapping = vmap(&pg, 1, VM_MAP, PAGE_KERNEL);
+	if (!mapping) {
+		rc = -ENOMEM;
+		goto out_unlock;
+	}
+
+	tx.mapping = mapping;
+	rc = stop_machine(sct_transaction_stop_machine, &tx, NULL);
+	if (rc) {
+		pr_err("ksu_glue: stop_machine failed rc=%d\n", rc);
+		goto out_unmap;
+	}
+	if (tx.degraded) {
+		hook_transaction_degraded = true;
+		for (i = 0; i < ARRAY_SIZE(sct_hooks); i++) {
+			unsigned long live =
+				READ_ONCE(((unsigned long *)sct_va)[sct_hooks[i].nr]);
+			sct_hooks[i].installed =
+				live == sct_hooks[i].replacement;
+		}
+		sct_hooks_live = true;
+		pr_emerg("ksu_glue: hook transition degraded at slot %d; "
+			 "module pinned until reboot\n", tx.failed_index);
+		rc = 0;
+		goto out_unmap;
+	}
+	if (tx.rc) {
+#ifdef SCR01_GLUE_FAULT_INJECT
+		if (fault_after_hook_writes > 0)
+			pr_warn("ksu_glue: injected transaction failure rolled back "
+				"inside stop_machine after %d writes\n",
+				fault_after_hook_writes);
+#endif
+		pr_err("ksu_glue: hook transaction failed at %s rc=%d rolled_back=%d\n",
+		       tx.failed_index >= 0 ? sct_hooks[tx.failed_index].name :
+		       "preflight", tx.rc, tx.rolled_back);
+		rc = tx.rc;
+		goto out_unmap;
+	}
+	for (i = 0; i < ARRAY_SIZE(sct_hooks); i++)
+		sct_hooks[i].installed = true;
+	sct_hooks_live = true;
+	pr_info("ksu_glue: all-CPU atomic syscall hook transaction committed "
+		"(%zu slots, recovered_forward=%d)\n",
+		ARRAY_SIZE(sct_hooks), tx.recovered_forward);
+	goto out_unmap;
+
+out_unmap:
+	vunmap(mapping);
+out_unlock:
+	mutex_unlock(&sct_patch_lock);
+	return rc;
+}
+
+#ifdef SCR01_GLUE_FAULT_INJECT
+static int restore_sct_hooks_transaction(void)
+{
+	struct page *pg;
+	void *mapping;
+	struct sct_transaction tx = {
+		.install = false,
+		.failed_index = -1,
+	};
+	int i, rc = 0;
+
+	mutex_lock(&sct_patch_lock);
+	if (!sct_hooks_live)
+		goto out_unlock;
+	pg = pfn_to_page((sct_phys & PAGE_MASK) >> PAGE_SHIFT);
+	mapping = vmap(&pg, 1, VM_MAP, PAGE_KERNEL);
+	if (!mapping) {
+		rc = -ENOMEM;
+		goto out_unlock;
+	}
+	for (i = 0; i < ARRAY_SIZE(sct_hooks); i++)
+		if (!sct_hooks[i].installed) {
+			rc = -EUCLEAN;
+			goto out_unmap;
+		}
+	tx.mapping = mapping;
+	rc = stop_machine(sct_transaction_stop_machine, &tx, NULL);
+	if (rc)
+		goto out_unmap;
+	if (tx.degraded || tx.rc) {
+		rc = tx.degraded ? -EUCLEAN : tx.rc;
+		goto out_unmap;
+	}
+	for (i = 0; i < ARRAY_SIZE(sct_hooks); i++)
+		sct_hooks[i].installed = false;
+	sct_hooks_live = false;
+	pr_info("ksu_glue: syscall hook transaction restored\n");
+
+out_unmap:
+	vunmap(mapping);
+out_unlock:
+	mutex_unlock(&sct_patch_lock);
+	return rc;
+}
+#endif
 
 /*
  * The exploit temporarily replaces sel_read_enforce with a 72-byte uid/cap
@@ -2590,6 +2903,58 @@ static const u32 version_proc_stock[] = {
 	0xa8c17bfd, 0xd65f03c0, 0xa9bf7bfd, 0x910003fd,
 	0xaa0103e0, 0x90000001,
 };
+static bool patch_receipt_valid;
+module_param(patch_receipt_valid, bool, 0444);
+
+#define SCR01_EXPECTED_SCT_VA              0xffffff8009101000UL
+#define SCR01_EXPECTED_SCT_PHYS            0x41101000UL
+#define SCR01_DEFEX_DISABLED_VA             0xffffff80099bde00UL
+#define SCR01_SELINUX_ENFORCING_VA          0xffffff8009e4ce40UL
+#define SCR01_AVC_PATCH_VA                  0xffffff800845c998UL
+#define SCR01_AVC_PATCH2_VA                 0xffffff800845ca78UL
+#define SCR01_AVC_PATCH3_VA                 0xffffff800845cbe0UL
+#define SCR01_AVC_PATCHED_INSN              0x52800008U
+
+static int validate_exploit_patch_receipt(void)
+{
+	u32 defex;
+	u32 enforcing;
+	u32 avc1;
+	u32 avc2;
+	u32 avc3;
+
+	patch_receipt_valid = false;
+	if (sct_va != SCR01_EXPECTED_SCT_VA ||
+	    sct_phys != SCR01_EXPECTED_SCT_PHYS) {
+		pr_err("ksu_glue: syscall-table identity mismatch va=0x%lx phys=0x%lx\n",
+		       sct_va, sct_phys);
+		return -EINVAL;
+	}
+	defex = READ_ONCE(*(u32 *)SCR01_DEFEX_DISABLED_VA);
+	enforcing = READ_ONCE(*(u32 *)SCR01_SELINUX_ENFORCING_VA);
+	avc1 = READ_ONCE(*(u32 *)SCR01_AVC_PATCH_VA);
+	avc2 = READ_ONCE(*(u32 *)SCR01_AVC_PATCH2_VA);
+	avc3 = READ_ONCE(*(u32 *)SCR01_AVC_PATCH3_VA);
+	if (defex != 1 || enforcing != 0 ||
+	    avc1 != SCR01_AVC_PATCHED_INSN ||
+	    avc2 != SCR01_AVC_PATCHED_INSN ||
+	    avc3 != SCR01_AVC_PATCHED_INSN) {
+		pr_err("ksu_glue: exploit patch receipt mismatch "
+		       "defex=%u enforcing=%u avc=%08x/%08x/%08x\n",
+		       defex, enforcing, avc1, avc2, avc3);
+		return -EINVAL;
+	}
+	if (memcmp((const void *)VERSION_PROC_SHOW_VA, sel_read_bootstrap,
+		   sizeof(sel_read_bootstrap)) ||
+	    memcmp((const void *)SEL_READ_ENFORCE_VA, sel_read_bootstrap,
+		   sizeof(sel_read_bootstrap))) {
+		pr_err("ksu_glue: bootstrap hook receipt mismatch\n");
+		return -EINVAL;
+	}
+	patch_receipt_valid = true;
+	pr_info("ksu_glue: exploit patch receipt verified directly\n");
+	return 0;
+}
 static bool sel_read_restored;
 
 static int restore_version_proc_show(void)
@@ -2706,6 +3071,11 @@ static void resolve_symbols(void)
 static int __init ksu_glue_init(void)
 {
 	unsigned long *sct = (unsigned long *)sct_va;
+	int rc;
+
+	rc = validate_exploit_patch_receipt();
+	if (rc)
+		return rc;
 	resolve_symbols();
 
 	orig_reboot     = (fn_reboot_t)     sct[NR_REBOOT];
@@ -2738,49 +3108,41 @@ static int __init ksu_glue_init(void)
 		return -ENOMEM;
 	profile_load();
 
-	patch_sct_slot(NR_REBOOT,     (unsigned long)hook_reboot,     NULL);
-	patch_sct_slot(NR_FACCESSAT,  (unsigned long)hook_faccessat,  NULL);
-	patch_sct_slot(NR_NEWFSTATAT, (unsigned long)hook_newfstatat, NULL);
-	patch_sct_slot(NR_EXECVE,     (unsigned long)hook_execve,     NULL);
-	patch_sct_slot(NR_EXECVEAT,   (unsigned long)hook_execveat,   NULL);
-	patch_sct_slot(NR_CONNECT,    (unsigned long)hook_connect,    NULL);
-	patch_sct_slot(NR_SETUID,     (unsigned long)hook_setuid,     NULL);
-	patch_sct_slot(NR_SETGID,     (unsigned long)hook_setgid,     NULL);
-	patch_sct_slot(NR_SETRESUID,  (unsigned long)hook_setresuid,  NULL);
-	patch_sct_slot(NR_SETRESGID,  (unsigned long)hook_setresgid,  NULL);
-	patch_sct_slot(NR_SETGROUPS,  (unsigned long)hook_setgroups,  NULL);
-	patch_sct_slot(NR_PRCTL,      (unsigned long)hook_prctl,      NULL);
-	patch_sct_slot(NR_SECCOMP,    (unsigned long)hook_seccomp,    NULL);
+	rc = install_sct_hooks_transaction();
+	if (rc) {
+		profile_clear_memory();
+		sulog_destroy();
+		put_cred(storage_cred);
+		storage_cred = NULL;
+		return rc;
+	}
 
 	pr_info("ksu_glue: max-support hooks installed; profiles=%lu "
 		"secctx2secid=%pS groups=%pS/%pS\n",
 		stat_profile_load, p_secctx_to_secid, p_groups_alloc, p_set_groups);
 	return 0;
 }
+#ifdef SCR01_GLUE_FAULT_INJECT
 static void __exit ksu_glue_exit(void)
 {
-	patch_sct_slot(NR_REBOOT,     (unsigned long)orig_reboot,     NULL);
-	patch_sct_slot(NR_FACCESSAT,  (unsigned long)orig_faccessat,  NULL);
-	patch_sct_slot(NR_NEWFSTATAT, (unsigned long)orig_newfstatat, NULL);
-	patch_sct_slot(NR_EXECVE,     (unsigned long)orig_execve,     NULL);
-	patch_sct_slot(NR_EXECVEAT,   (unsigned long)orig_execveat,   NULL);
-	patch_sct_slot(NR_CONNECT,    (unsigned long)orig_connect,    NULL);
-	patch_sct_slot(NR_SETUID,     (unsigned long)orig_setuid,     NULL);
-	patch_sct_slot(NR_SETGID,     (unsigned long)orig_setgid,     NULL);
-	patch_sct_slot(NR_SETRESUID,  (unsigned long)orig_setresuid,  NULL);
-	patch_sct_slot(NR_SETRESGID,  (unsigned long)orig_setresgid,  NULL);
-	patch_sct_slot(NR_SETGROUPS,  (unsigned long)orig_setgroups,  NULL);
-	patch_sct_slot(NR_PRCTL,      (unsigned long)orig_prctl,      NULL);
-	patch_sct_slot(NR_SECCOMP,    (unsigned long)orig_seccomp,    NULL);
+	int rc = restore_sct_hooks_transaction();
+
+	if (rc) {
+		pr_emerg("ksu_glue: test unload restore failed rc=%d\n", rc);
+		return;
+	}
 	sulog_destroy();
+	profile_clear_memory();
 	if (storage_cred) {
 		put_cred(storage_cred);
 		storage_cred = NULL;
 	}
 	pr_info("ksu_glue: unloaded, syscall table restored\n");
 }
-module_init(ksu_glue_init);
 module_exit(ksu_glue_exit);
+#endif
+module_init(ksu_glue_init);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("scr01");
 MODULE_DESCRIPTION("KernelSU-Next runtime front-end (4.14 non-GKI, syscall-table hooks)");
+MODULE_INFO(scr01_unload_policy, "blocked-in-production");

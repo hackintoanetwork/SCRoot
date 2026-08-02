@@ -340,6 +340,34 @@ fi
         with self.assertRaises(ValueError):
             verifier.verify_home_runtime_watchdog(unsafe, "unsafe")
 
+    def test_home_activation_waits_for_an_unlocked_user_before_generation(self) -> None:
+        valid = b'''if [ "$(getprop sys.boot_completed)" != "1" ]; then
+exit 10
+fi
+[ -x "$TIMEOUT" ] || {
+exit 23
+}
+user_state=$("$TIMEOUT" -k 1s 8s am get-started-user-state 0 2>/dev/null) ||
+    user_state=
+if [ "$user_state" != "RUNNING_UNLOCKED" ]; then
+    log_line "deferred: user 0 is $user_state; Home activation waits for unlock"
+    exit 0
+fi
+
+sleep 5
+
+if ! ensure_generated_apk; then
+    exit 20
+fi
+'''
+        verifier.verify_home_unlock_deferral(valid, "valid")
+        unsafe = valid.replace(
+            b'if [ "$user_state" != "RUNNING_UNLOCKED" ]; then',
+            b'if [ "$user_state" = "RUNNING_UNLOCKED" ]; then',
+        )
+        with self.assertRaises(ValueError):
+            verifier.verify_home_unlock_deferral(unsafe, "unsafe")
+
     def test_valid_minimal_archive(self) -> None:
         module = b"id=test\nversion=1\n"
         script = b"#!/bin/sh\nexit 0\n"
@@ -432,8 +460,8 @@ fi
     def test_android_manifest_rejects_an_exported_privileged_service(self) -> None:
         source = verifier.MANIFEST.read_text("utf-8")
         unsafe = source.replace(
-            'android:name=".AutoRootService"\n            android:enabled="true"\n            android:exported="false"',
-            'android:name=".AutoRootService"\n            android:enabled="true"\n            android:exported="true"',
+            'android:name=".AutoRootService"\n            android:directBootAware="true"\n            android:enabled="true"\n            android:exported="false"',
+            'android:name=".AutoRootService"\n            android:directBootAware="true"\n            android:enabled="true"\n            android:exported="true"',
         )
         self.assertNotEqual(source, unsafe)
         with tempfile.TemporaryDirectory() as temporary:
