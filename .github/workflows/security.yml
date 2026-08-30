@@ -41,4 +41,4 @@ jobs:
       - run: python3 tools/verify_release_assets.py
       - run: python3 tools/verify_corresponding_source.py
       - run: ./gradlew --no-daemon --no-build-cache --rerun-tasks clean testDebugUnitTest testReleaseUnitTest lintRelease assembleRelease
-      - uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
