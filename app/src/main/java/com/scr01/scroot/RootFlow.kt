@@ -125,7 +125,7 @@ object RootFlow {
         "libbootstrap.so" to "e81028efeaf44aba81607aa6116cc1273ad8f4d4eee4ec58ff5e14be061fca90",
         "libmemprep.so" to "a743f6c5432ec8072faa1bc47e07d8811135905eb3e458e8f4d892b192cadcee",
         "libksud.so" to "637676421190aeec504093707ad675a45faaf11bd4b53129d52e150490902cca",
-        "libksuglue.so" to "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9",
+        "libksuglue.so" to "b0789adf40150a9ee22c5d4a62efa4ee5dae94a753a5250e0db669498c069c30",
         "libksucheck.so" to "0abb36169ff0864ee659e5b40f7666b01cf36d765e3216d9a4d14695f92817d6",
         "libadbroot.so" to "5562adc1e5c6f52fb91f469a1a7d3480050d8697fb5dedbd7fb386d282cd88b8",
         "manager.apk" to "80a9e4b1ba9644f361add3e003e1075bd4f9cb374bbde465c2b57522b5288ba9",

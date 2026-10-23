@@ -17,10 +17,10 @@ EXPECTED_FILES = {
     "upstream/meta-overlayfs-v1.3.1.tar.gz": "ccf90fbd6dd5b5f40204b0fbbfc8db5d2540fd0a6d0939a2dec70f43282c490c",
     "KernelSU-Next-SCR01/kernel/Kbuild": "7881e2c64cd44626665d4876c8cbf1ed5808a4069afd611945b4c7a7437c5aef",
     "KernelSU-Next-SCR01/kernel/adb_root_toggle.c": "56de7d6d82bfe0c830ea25598a8f7f34dea6436d2a1ac22e6e4eeaad214193b5",
-    "KernelSU-Next-SCR01/kernel/build-in-docker.sh": "0d50dd4bd6853bbeb20528066032ad1148d824aecf3b31624bbf845a25876894",
+    "KernelSU-Next-SCR01/kernel/build-in-docker.sh": "931f24750aacbb3424ce3adc67b5e335d40bf949ce0781c53ff08456fcd40e60",
     "KernelSU-Next-SCR01/kernel/device.config": "bb1abef0939942dc644ad4a21ae71fe173c3e4b09e73ce89924ae4d1c1be0191",
-    "KernelSU-Next-SCR01/kernel/ksu_glue.c": "e0e46baf28b3220a981a924e546a9f81c6a4ba6ac2f4e2798ab4faa8ef201de1",
-    "KernelSU-Next-SCR01/kernel/patch_init_offset.py": "86a8b66a34d7de195bdd7e0b6ee3c36a64b2d7f27de1835e485d421fc9d6b8fa",
+    "KernelSU-Next-SCR01/kernel/ksu_glue.c": "0c3ce72f36f154680274435dfb80234f76e2376e1ab7fc8a1152415adfb883ab",
+    "KernelSU-Next-SCR01/kernel/patch_init_offset.py": "231cc98c698c7315ec05e2f0f45cf3fdbe56bea41a453c5b8c8e32d6c64bfb5d",
     "KernelSU-Next-SCR01/manager/build-unsigned.sh": "c90578d0ff4a2cd37c5cf77fb747f5c36f1a5c931572f648dd927cfef4c73320",
     "KernelSU-Next-SCR01/manager/patch_manager.py": "548c31f299860244b0eac032f2fc094c50bff095fd17e6ca9fb8cb2636a9071b",
     "KernelSU-Next-SCR01/manager/patch_source.py": "835c777cb09afeadf9d7e323cb165b97d179edc190c890bbe260a8283edcd395",
@@ -38,7 +38,7 @@ EXPECTED_RELEASES = {
     "../app/src/main/assets/meta-overlayfs-scr01.zip": "df4b4a33c9974eb873e62ad01fa7229e9648cc848d032f6192a89b055cb9528c",
     "../app/src/main/jniLibs/arm64-v8a/libadbroot.so": "5562adc1e5c6f52fb91f469a1a7d3480050d8697fb5dedbd7fb386d282cd88b8",
     "../app/src/main/jniLibs/arm64-v8a/libksud.so": "637676421190aeec504093707ad675a45faaf11bd4b53129d52e150490902cca",
-    "../app/src/main/jniLibs/arm64-v8a/libksuglue.so": "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9",
+    "../app/src/main/jniLibs/arm64-v8a/libksuglue.so": "b0789adf40150a9ee22c5d4a62efa4ee5dae94a753a5250e0db669498c069c30",
 }
 EXPECTED_MANAGER_INNER = {
     "lib/arm64-v8a/libadbroot.so": "5562adc1e5c6f52fb91f469a1a7d3480050d8697fb5dedbd7fb386d282cd88b8",
@@ -47,8 +47,8 @@ EXPECTED_MANAGER_INNER = {
 }
 EXPECTED_META_BINARY = "04ef286eb33dd6650be08c368cc16d06e369aeae2c582f8df520d0a7dcc2fa95"
 EXPECTED_KERNEL_OUTPUTS = {
-    "ksu_glue.unpatched.ko": "0a37c39e94f816b7c769efa583e0134d4e3331a38d6c93a926b9373229e70ebd",
-    "ksu_glue.ko": "b1f6b9afbbfc2f6c388dada781f0761899f494bc6f05e8657fa4325b5a0cbfd9",
+    "ksu_glue.unpatched.ko": "2d18d4e6701337933add123ef01f4dceb151dfbe71e6f9f7dce7f512a21bad2d",
+    "ksu_glue.ko": "b0789adf40150a9ee22c5d4a62efa4ee5dae94a753a5250e0db669498c069c30",
 }
 ORIGINAL_COMPONENT = b"#/com.rifsxd.ksunext.ui.MainActivity\x00"
 PATCHED_COMPONENT = b"#/com.rifsxd.ksunext.ui.MainActivit_\x00"
